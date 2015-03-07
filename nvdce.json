@@ -1,0 +1,12 @@
+{
+    "channels": ["#sshd"],
+    "check_interval_minutes": 120,
+    "highlights": [
+        "Drupal",
+        "Wordpress",
+        "Linux",
+        "[Rr]emote attack[^ ]+"
+    ],
+    "feed_url": "http://localhost:8080/nvdcve-2.0-Modified.xml.gz",
+    "_feed_url": "https://nvd.nist.gov/feeds/xml/cve/nvdcve-2.0-Modified.xml.gz"
+}

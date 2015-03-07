@@ -4,6 +4,7 @@ import (
 
 	"github.com/jebjerg/fixedhistory"
 	"compress/gzip"
+	"encoding/json"
 	"encoding/xml"
 	"fmt"
 	"github.com/cenkalti/rpc2"
@@ -61,7 +62,7 @@ func (e ByDate) Less(i, j int) bool {
 }
 
 func CVEFeed() (*Feed, error) {
-	res, err := http.Get(CVEFeedURL)
+	res, err := http.Get(config.FeedURL)
 	if err != nil {
 		return nil, err
 	}
@@ -80,19 +81,45 @@ func CVEFeed() (*Feed, error) {
 
 const CVE_DATE = "Jan 2, 2006 15:04"
 
-// const CVEFeedURL = "http://localhost:8080/nvdcve-2.0-Modified.xml.gz"
-const CVEFeedURL = "https://nvd.nist.gov/feeds/xml/cve/nvdcve-2.0-Modified.xml.gz"
-
 func Highlight(input string) string {
 	output := input
-	for _, word := range []string{"Drupal", "Wordpress", "Linux", "[Rr]emote attack[^ ]+"} {
+	for _, word := range config.Highlights {
 		re := regexp.MustCompile(fmt.Sprintf("(%v)", word))
 		output = re.ReplaceAllString(output, "\002\00308$1\003\002")
 	}
 	return output
 }
 
+type Config struct {
+	Channels   []string `json:"channels"`
+	Interval   int      `json:"check_interval_minutes"`
+	Highlights []string `json:"highlights"`
+	FeedURL    string   `json:"feed_url"`
+}
+
+func (c *Config) Save(path string) error {
+	if data, err := json.Marshal(c); err != nil {
+		return err
+	} else {
+		return ioutil.WriteFile(path, data, 600)
+	}
+}
+
+func NewConfig(path string) (*Config, error) {
+	config := &Config{}
+	data, err := ioutil.ReadFile(path)
+	if err != nil {
+		return nil, err
+	}
+	err = json.Unmarshal(data, config)
+	return config, err
+}
+
+var config *Config
+
 func main() {
+	config, _ = NewConfig("./nvdce.json")
+
 	conn, err := net.Dial("tcp", "localhost:1234")
 	if err != nil {
 		panic(err)
@@ -125,7 +152,7 @@ func main() {
 
 	max_items := 5
 	go func() {
-		interval := time.NewTicker(2 * time.Hour)
+		interval := time.NewTicker(time.Duration(config.Interval) * time.Minute)
 		for {
 			feed, err := CVEFeed()
 			if err != nil {
@@ -144,7 +171,9 @@ func main() {
 					score = fmt.Sprintf("%0.1f", entry.CVSS.Metrics.Score)
 				}
 				msg := fmt.Sprintf("\002%v\002 [\00303%v\003] \002%v\002 (%v) %v", entry.LatestModified.Format(CVE_DATE), entry.ID, entry.UpdatedOrNew(), score, Highlight(entry.Summary))
-				c.Call("privmsg", &PrivMsg{"#ssh", msg}, &reply)
+				for _, channel := range config.Channels {
+					go c.Call("privmsg", &PrivMsg{channel, msg}, &reply)
+				}
 			}
 			<-interval.C
 		}
