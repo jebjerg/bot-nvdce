@@ -6,6 +6,7 @@ import (
 	"compress/gzip"
 	"encoding/json"
 	"encoding/xml"
+	"flag"
 	"fmt"
 	"github.com/cenkalti/rpc2"
 	irc "github.com/fluffle/goirc/client"
@@ -62,7 +63,13 @@ func (e ByDate) Less(i, j int) bool {
 }
 
 func CVEFeed() (*Feed, error) {
-	res, err := http.Get(config.FeedURL)
+	var res *http.Response
+	var err error
+	if debug {
+		res, err = http.Get("http://localhost:8080/nvdcve-2.0-Modified.xml.gz")
+	} else {
+		res, err = http.Get(config.FeedURL)
+	}
 	if err != nil {
 		return nil, err
 	}
@@ -81,9 +88,27 @@ func CVEFeed() (*Feed, error) {
 
 const CVE_DATE = "Jan 2, 2006 15:04"
 
-func Highlight(input string) string {
+var config *Config
+var debug bool
+
+func init() {
+	var err error
+	config, err = NewConfig("./nvdce.json")
+	if err != nil {
+		panic(err)
+	}
+}
+
+func Highlight(channel, input string) string {
 	output := input
-	for _, word := range config.Highlights {
+	if config == nil {
+		return output
+	}
+	highlights, ok := config.Highlights[channel]
+	if !ok {
+		return output
+	}
+	for _, word := range highlights {
 		re := regexp.MustCompile(fmt.Sprintf("(%v)", word))
 		output = re.ReplaceAllString(output, "\002\00308$1\003\002")
 	}
@@ -91,14 +116,14 @@ func Highlight(input string) string {
 }
 
 type Config struct {
-	Channels   []string `json:"channels"`
-	Interval   int      `json:"check_interval_minutes"`
-	Highlights []string `json:"highlights"`
-	FeedURL    string   `json:"feed_url"`
+	Channels   []string            `json:"channels"`
+	Interval   int                 `json:"check_interval_minutes"`
+	Highlights map[string][]string `json:"highlights"`
+	FeedURL    string              `json:"feed_url"`
 }
 
 func (c *Config) Save(path string) error {
-	if data, err := json.Marshal(c); err != nil {
+	if data, err := json.MarshalIndent(c, "", "    "); err != nil {
 		return err
 	} else {
 		return ioutil.WriteFile(path, data, 600)
@@ -115,10 +140,24 @@ func NewConfig(path string) (*Config, error) {
 	return config, err
 }
 
-var config *Config
+func Remove(element string, elements *[]string) error {
+	index := -1
+	for i, e := range *elements {
+		if e == element {
+			index = i
+		}
+	}
+	if index != -1 {
+		*elements = append((*elements)[:index], (*elements)[index+1:]...)
+	} else {
+		return fmt.Errorf("element (%v) not found in (%v)", element, elements)
+	}
+	return nil
+}
 
 func main() {
-	config, _ = NewConfig("./nvdce.json")
+	flag.BoolVar(&debug, "debug", false, "debug mode (localhost xml feed)")
+	flag.Parse()
 
 	conn, err := net.Dial("tcp", "localhost:1234")
 	if err != nil {
@@ -128,16 +167,53 @@ func main() {
 	go c.Run()
 	// just for kicks
 	c.Handle("privmsg", func(client *rpc2.Client, args *irc.Line, reply *bool) error {
+		channel, line := args.Args[0], args.Args[1]
 		for _, s := range []string{".cve", "bugs?"} {
-			if strings.Join(args.Args[1:], " ") == s {
-				client.Call("privmsg", &PrivMsg{args.Args[0], s}, &reply)
+			if line == s {
+				client.Call("privmsg", &PrivMsg{channel, s}, &reply)
 				break
+			}
+		}
+		if strings.Fields(line)[0] == ".highlights" {
+			hl, ok := config.Highlights[channel]
+			if ok {
+				client.Call("privmsg", &PrivMsg{channel, strings.Join(hl, ", ")}, &reply)
+			} else {
+				client.Call("privmsg", &PrivMsg{channel, fmt.Sprintf("No highlights for %v", channel)}, &reply)
+			}
+		} else if strings.Fields(line)[0] == ".highlight" {
+			line = line[len(".highlight")+1:]
+			_, ok := config.Highlights[channel]
+			if ok {
+				token := line
+				add := true // op {{{
+				if token[0] == '+' {
+					add = true
+				} else if token[0] == '-' {
+					add = false
+				}
+				if token[0] == '+' || token[0] == '-' {
+					token = token[1:]
+				} // }}}
+				if add == true {
+					config.Highlights[channel] = append(config.Highlights[channel], token)
+				} else {
+					hls := config.Highlights[channel]
+					Remove(token, &hls)
+					config.Highlights[channel] = hls
+				}
+				config.Save("./nvdce.json")
+				client.Call("privmsg", &PrivMsg{channel, strings.Join(config.Highlights[channel], ", ")}, &reply)
 			}
 		}
 		return nil
 	})
 	var reply bool
 	c.Call("register", struct{}{}, &reply)
+
+	for _, channel := range config.Channels {
+		c.Call("join", channel, &reply)
+	}
 
 	// history
 	feed, err := CVEFeed()
@@ -146,7 +222,7 @@ func main() {
 	}
 	history := fixedhistory.NewHistory(50)
 	sort.Sort(ByDate(feed.Entries))
-	for _, entry := range feed.Entries[5:] {
+	for _, entry := range feed.Entries[2:] {
 		history.Push(entry.ID + entry.LatestModified.Format(CVE_DATE))
 	}
 
@@ -170,8 +246,8 @@ func main() {
 				} else {
 					score = fmt.Sprintf("%0.1f", entry.CVSS.Metrics.Score)
 				}
-				msg := fmt.Sprintf("\002%v\002 [\00303%v\003] \002%v\002 (%v) %v", entry.LatestModified.Format(CVE_DATE), entry.ID, entry.UpdatedOrNew(), score, Highlight(entry.Summary))
 				for _, channel := range config.Channels {
+					msg := fmt.Sprintf("\002%v\002 [\00303%v\003] \002%v\002 (%v) %v", entry.LatestModified.Format(CVE_DATE), entry.ID, entry.UpdatedOrNew(), score, Highlight(channel, entry.Summary))
 					go c.Call("privmsg", &PrivMsg{channel, msg}, &reply)
 				}
 			}
