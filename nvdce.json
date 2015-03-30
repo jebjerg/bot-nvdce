@@ -1,4 +1,5 @@
 {
+    "bot_host": "localhost:1234",
     "channels": [
         "#sshd",
         "#generic"

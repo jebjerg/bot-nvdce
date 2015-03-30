@@ -1,15 +1,14 @@
 package main
 
 import (
-
-	"github.com/jebjerg/fixedhistory"
 	"compress/gzip"
-	"encoding/json"
 	"encoding/xml"
 	"flag"
 	"fmt"
 	"github.com/cenkalti/rpc2"
 	irc "github.com/fluffle/goirc/client"
+	"github.com/jebjerg/fixedhistory"
+	cfg "github.com/jebjerg/go-bot/bot/config"
 	"io/ioutil"
 	"net"
 	"net/http"
@@ -88,13 +87,12 @@ func CVEFeed() (*Feed, error) {
 
 const CVE_DATE = "Jan 2, 2006 15:04"
 
-var config *Config
+var config *nvdce_conf
 var debug bool
 
 func init() {
-	var err error
-	config, err = NewConfig("./nvdce.json")
-	if err != nil {
+	config = &nvdce_conf{}
+	if err := cfg.NewConfig(config, "nvdce.json"); err != nil {
 		panic(err)
 	}
 }
@@ -115,29 +113,12 @@ func Highlight(channel, input string) string {
 	return output
 }
 
-type Config struct {
+type nvdce_conf struct {
 	Channels   []string            `json:"channels"`
+	BotHost    string              `json:"bot_host"`
 	Interval   int                 `json:"check_interval_minutes"`
 	Highlights map[string][]string `json:"highlights"`
 	FeedURL    string              `json:"feed_url"`
-}
-
-func (c *Config) Save(path string) error {
-	if data, err := json.MarshalIndent(c, "", "    "); err != nil {
-		return err
-	} else {
-		return ioutil.WriteFile(path, data, 600)
-	}
-}
-
-func NewConfig(path string) (*Config, error) {
-	config := &Config{}
-	data, err := ioutil.ReadFile(path)
-	if err != nil {
-		return nil, err
-	}
-	err = json.Unmarshal(data, config)
-	return config, err
 }
 
 func Remove(element string, elements *[]string) error {
@@ -159,7 +140,7 @@ func main() {
 	flag.BoolVar(&debug, "debug", false, "debug mode (localhost xml feed)")
 	flag.Parse()
 
-	conn, err := net.Dial("tcp", "localhost:1234")
+	conn, err := net.Dial("tcp", config.BotHost)
 	if err != nil {
 		panic(err)
 	}
@@ -202,7 +183,7 @@ func main() {
 					Remove(token, &hls)
 					config.Highlights[channel] = hls
 				}
-				config.Save("./nvdce.json")
+				cfg.Save(config, "nvdce.json")
 				client.Call("privmsg", &PrivMsg{channel, strings.Join(config.Highlights[channel], ", ")}, &reply)
 			}
 		}
@@ -222,7 +203,7 @@ func main() {
 	}
 	history := fixedhistory.NewHistory(50)
 	sort.Sort(ByDate(feed.Entries))
-	for _, entry := range feed.Entries[2:] {
+	for _, entry := range feed.Entries[2:] { // Allow a couple to know it's working on restart
 		history.Push(entry.ID + entry.LatestModified.Format(CVE_DATE))
 	}
 
