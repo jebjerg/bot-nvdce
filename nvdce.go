@@ -98,16 +98,16 @@ func main() {
 		channel, line := args.Args[0], args.Args[1]
 		for _, s := range []string{".cve", "bugs?"} {
 			if line == s {
-				client.Call("privmsg", &PrivMsg{channel, s}, &reply)
+				client.Call("privmsg", &PrivMsg{channel, s}, nil)
 				break
 			}
 		}
 		if strings.Fields(line)[0] == ".highlights" {
 			hl, ok := config.Highlights[channel]
 			if ok {
-				client.Call("privmsg", &PrivMsg{channel, strings.Join(hl, ", ")}, &reply)
+				client.Call("privmsg", &PrivMsg{channel, strings.Join(hl, ", ")}, nil)
 			} else {
-				client.Call("privmsg", &PrivMsg{channel, fmt.Sprintf("No highlights for %v", channel)}, &reply)
+				client.Call("privmsg", &PrivMsg{channel, fmt.Sprintf("No highlights for %v", channel)}, nil)
 			}
 		} else if strings.Fields(line)[0] == ".highlight" {
 			line = line[len(".highlight")+1:]
@@ -131,16 +131,15 @@ func main() {
 					config.Highlights[channel] = hls
 				}
 				cfg.Save(config, "nvdce.json")
-				client.Call("privmsg", &PrivMsg{channel, strings.Join(config.Highlights[channel], ", ")}, &reply)
+				client.Call("privmsg", &PrivMsg{channel, strings.Join(config.Highlights[channel], ", ")}, nil)
 			}
 		}
 		return nil
 	})
-	var reply bool
-	c.Call("register", struct{}{}, &reply)
+	c.Call("register", struct{}{}, nil)
 
 	for _, channel := range config.Channels {
-		c.Call("join", channel, &reply)
+		c.Call("join", channel, nil)
 	}
 
 	// history
@@ -176,7 +175,7 @@ func main() {
 				}
 				for _, channel := range config.Channels {
 					msg := fmt.Sprintf("\002%v\002 [\00303%v\003] \002%v\002 (%v) %v", entry.LatestModified.Format(CVE_DATE), entry.ID, entry.UpdatedOrNew(), score, Highlight(channel, entry.Summary))
-					go c.Call("privmsg", &PrivMsg{channel, msg}, &reply)
+					go c.Call("privmsg", &PrivMsg{channel, msg}, nil)
 				}
 			}
 			<-interval.C
