@@ -18,49 +18,6 @@ import (
 	"time"
 )
 
-type PrivMsg struct {
-	Target, Text string
-}
-
-type BaseMetrics struct {
-	XMLName xml.Name `xml:"base_metrics"`
-	Score   float32  `xml:"score"`
-}
-
-type CVSS struct {
-	XMLName xml.Name    `xml:"cvss"`
-	Metrics BaseMetrics `xml:"base_metrics"`
-}
-
-type Entry struct {
-	XMLName        xml.Name  `xml:"entry"`
-	ID             string    `xml:"id,attr"`
-	CVSS           CVSS      `xml:"cvss"`
-	Summary        string    `xml:"summary"`
-	Published      time.Time `xml:"published-datetime"`
-	LatestModified time.Time `xml:"last-modified-datetime"`
-}
-
-func (e *Entry) UpdatedOrNew() string {
-	if e.Published == e.LatestModified {
-		return "NEW"
-	}
-	return "UPDATE"
-}
-
-type Feed struct {
-	XMLName xml.Name `xml:"nvd"`
-	Entries []Entry  `xml:"entry"`
-}
-
-type ByDate []Entry
-
-func (e ByDate) Len() int      { return len(e) }
-func (e ByDate) Swap(i, j int) { e[i], e[j] = e[j], e[i] }
-func (e ByDate) Less(i, j int) bool {
-	return e[i].LatestModified.UnixNano() < e[j].LatestModified.UnixNano()
-}
-
 func CVEFeed() (*Feed, error) {
 	var res *http.Response
 	var err error
@@ -84,8 +41,6 @@ func CVEFeed() (*Feed, error) {
 	feed := &Feed{}
 	return feed, xml.Unmarshal(data, feed)
 }
-
-const CVE_DATE = "Jan 2, 2006 15:04"
 
 var config *nvdce_conf
 var debug bool
@@ -111,14 +66,6 @@ func Highlight(channel, input string) string {
 		output = re.ReplaceAllString(output, "\002\00308$1\003\002")
 	}
 	return output
-}
-
-type nvdce_conf struct {
-	Channels   []string            `json:"channels"`
-	BotHost    string              `json:"bot_host"`
-	Interval   int                 `json:"check_interval_minutes"`
-	Highlights map[string][]string `json:"highlights"`
-	FeedURL    string              `json:"feed_url"`
 }
 
 func Remove(element string, elements *[]string) error {
